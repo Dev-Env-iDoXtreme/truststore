@@ -1,12 +1,10 @@
-// Copyright (c) 2018 The truststore Authors. All rights reserved.
-// Copyright (c) 2018 The mkcert Authors. All rights reserved.
-
 package truststore
 
 import (
 	"bytes"
 	"crypto/x509"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"strings"
@@ -16,8 +14,8 @@ var (
 	// NSSProfile is the path of the Firefox profiles.
 	NSSProfile = os.Getenv("HOME") + "/.mozilla/firefox/*"
 
-	// CertutilInstallHelp is the command to run on linux to add NSS support.
-	CertutilInstallHelp = `apt install libnss3-tools" or "yum install nss-tools`
+	// CertutilInstallHelp is the command to add NSS support.
+	CertutilInstallHelp = ""
 
 	// SystemTrustFilename is the format used to name the root certificates.
 	SystemTrustFilename string
@@ -27,23 +25,16 @@ var (
 )
 
 func init() {
-	switch {
-	case pathExists("/etc/pki/ca-trust/source/anchors/"):
-		SystemTrustFilename = "/etc/pki/ca-trust/source/anchors/%s.pem"
-		SystemTrustCommand = []string{"update-ca-trust", "extract"}
-	case pathExists("/usr/local/share/ca-certificates/"):
-		SystemTrustFilename = "/usr/local/share/ca-certificates/%s.crt"
-		SystemTrustCommand = []string{"update-ca-certificates"}
-	case pathExists("/usr/share/pki/trust/anchors/"):
-		SystemTrustFilename = "/usr/share/pki/trust/anchors/%s.crt"
-		SystemTrustCommand = []string{"update-ca-certificates"}
-	case pathExists("/etc/ca-certificates/trust-source/anchors/"):
-		SystemTrustFilename = "/etc/ca-certificates/trust-source/anchors/%s.crt"
-		SystemTrustCommand = []string{"trust", "extract-compat"}
-	case pathExists("/etc/ssl/certs/"):
-		SystemTrustFilename = "/etc/ssl/certs/%s.crt"
-		SystemTrustCommand = []string{"trust", "extract-compat"}
+	if !pathExists("/usr/local/etc/ssl/certs") {
+		err := os.Mkdir("/usr/local/etc/ssl/certs", 0755)
+		if err != nil {
+			SystemTrustCommand = nil
+			debug(err.Error())
+			return
+		}
 	}
+	SystemTrustCommand = []string{"certctl", "rehash"}
+	SystemTrustFilename = "/usr/local/etc/ssl/certs/%s.crt"
 }
 
 func pathExists(path string) bool {
@@ -52,7 +43,7 @@ func pathExists(path string) bool {
 }
 
 func systemTrustFilename(cert *x509.Certificate) string {
-	return fmt.Sprintf(SystemTrustFilename, strings.ReplaceAll(uniqueName(cert), " ", "_"))
+	return fmt.Sprintf(SystemTrustFilename, strings.Replace(uniqueName(cert), " ", "_", -1))
 }
 
 func installPlatform(filename string, cert *x509.Certificate) error {
@@ -60,7 +51,7 @@ func installPlatform(filename string, cert *x509.Certificate) error {
 		return ErrNotSupported
 	}
 
-	data, err := os.ReadFile(filename)
+	data, err := ioutil.ReadFile(filename)
 	if err != nil {
 		return err
 	}
@@ -78,11 +69,11 @@ func installPlatform(filename string, cert *x509.Certificate) error {
 		return NewCmdError(err, cmd, out)
 	}
 
-	debug("certificate installed properly in linux trusts")
+	debug("certificate installed properly in FreeBSD trusts")
 	return nil
 }
 
-func uninstallPlatform(_ string, cert *x509.Certificate) error {
+func uninstallPlatform(filename string, cert *x509.Certificate) error {
 	if SystemTrustCommand == nil {
 		return ErrNotSupported
 	}
@@ -99,15 +90,13 @@ func uninstallPlatform(_ string, cert *x509.Certificate) error {
 		return NewCmdError(err, cmd, out)
 	}
 
-	debug("certificate uninstalled properly from linux trusts")
+	debug("certificate uninstalled properly from FreeBSD trusts")
 	return nil
 }
 
 func CommandWithSudo(cmd ...string) *exec.Cmd {
 	if _, err := exec.LookPath("sudo"); err != nil {
-		//nolint:gosec // tolerable risk necessary for function
 		return exec.Command(cmd[0], cmd[1:]...)
 	}
-	//nolint:gosec // tolerable risk necessary for function
 	return exec.Command("sudo", append([]string{"--"}, cmd...)...)
 }
